@@ -34,6 +34,17 @@ fn node_from_config(sf : std.builtin.Type.StructField, config : anytype)?std.bui
     } else return null;
 }
 
+fn hint_from_config(sf : std.builtin.Type.StructField, is_optional : anytype)?std.builtin.Type.StructField {
+    const t = if (is_optional) ?avl.Hint else avl.Hint;
+    return .{
+        .name = sf.name,
+        .type = t,
+        .is_comptime = false,
+        .alignment = @alignOf(t),
+        .default_value_ptr = null,
+    };
+}
+
 fn config_from_type(sf : std.builtin.Type.StructField, _ : anytype) ?std.builtin.Type.StructField {
     const T = ? struct {
         unique : bool = false,
@@ -136,10 +147,61 @@ pub fn MultiIndex(comptime T: type, comptime config: Config(T)) type {
             const node = try self.allocator.create(Node);
             node.value = value;
             node.headers = .{};
+
+            const Hints = map_struct(@TypeOf(config), hint_from_config, false);
+            var hints : Hints = undefined;
+
             inline for (std.meta.fields(Indexes)) |f| {
-                try @field(self.indexes, f.name).insert(&@field(node.headers, f.name));
+                const index = &@field(self.indexes, f.name);
+                const index_node = &@field(node.headers, f.name);
+                const hint = &@field(hints, f.name);
+
+                hint.* = try index.prepare_insert(index_node);
             }
+
+            inline for (std.meta.fields(Indexes)) |f| {
+                const index = &@field(self.indexes, f.name);
+                const index_node = &@field(node.headers, f.name);
+                const hint = @field(hints, f.name);
+
+                index.finish_insert(hint, index_node) catch unreachable;
+            }
+
             self.item_count += 1;
+        }
+
+        // case 1: value change and need reorder/rehash -> hint
+        // case 2: value change but no reorder/rehash -> no hint
+        // case 3: value doesn't change -> no hint
+        pub fn update(self : *Self, iterator : Iterator, value : T) !T {
+            const node = iterator.node orelse return error.InvalidIterator;
+            const Hints = map_struct(@TypeOf(config), hint_from_config, true);
+            var hints : Hints = undefined;
+
+            var tmp_node = Node{.value = value, .headers = .{}};
+
+            inline for (std.meta.fields(Indexes)) |f| {
+                const index = &@field(self.indexes, f.name);
+                const index_node = &@field(node.headers, f.name);
+                const index_tmp_node = &@field(tmp_node.headers, f.name);
+                const hint = &@field(hints, f.name);
+
+                hint.* = try index.prepare_update(index_node, index_tmp_node);
+            }
+
+            const old_value = node.value;
+            node.value = value;
+
+            inline for (std.meta.fields(Indexes)) |f| {
+                const index = &@field(self.indexes, f.name);
+                const index_node = &@field(node.headers, f.name);
+                const optional_hint = @field(hints, f.name);
+
+                if (optional_hint) |hint|
+                    index.finish_update(hint, index_node) catch unreachable;
+            }
+
+            return old_value;
         }
 
         pub fn erase_it(self : *Self, iterator : Iterator) void {

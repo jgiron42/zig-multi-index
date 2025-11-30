@@ -43,6 +43,8 @@ pub const Node = struct {
 	}
 };
 
+pub const Hint = ?*Node;
+
 const Config = struct {
 	compare : fn (*Node, *Node) std.math.Order,
 	unique : bool,
@@ -80,8 +82,60 @@ pub fn AVL(comptime config : Config) type{
 			return self.add_to_tree(n);
 		}
 
+		pub fn prepare_insert(self: *Self, n : *Node) !Hint {
+			if (self.tree == null)
+				return null;
+			if (self.upper_bound(n)) |next| {
+				if (next_node(next, "l")) |prev| {
+					if (config.unique and compare_nodes(prev, n) == .eq)
+						return error.Duplicate;
+				}
+				return next;
+			} else if (self.last()) |prev| {
+				if (config.unique and compare_nodes(prev, n) == .eq)
+					return error.Duplicate;
+				return prev;
+			} else unreachable;
+		}
+
+		pub fn finish_insert(self: *Self, hint : Hint, n : *Node) !void {
+			return self.add_to_tree_hint(hint, n);
+		}
+
+		fn need_reorder(n : *Node, new_node : *Node) bool {
+
+			if (next_node(n, "l")) |prev|
+				if (compare_nodes(prev, new_node) != .lt)
+					return true;
+			if (next_node(n, "r")) |next|
+				if (compare_nodes(new_node, next) != .lt)
+					return true;
+			return false;
+		}
+
+		pub fn prepare_update(self: *Self, n : *Node, new_node : *Node) !?Hint {
+			if (compare_nodes(n, new_node) == .eq or !need_reorder(n, new_node))
+				return null;
+			return self.prepare_insert(new_node) catch |e| e;
+		}
+
+		pub fn finish_update(self: *Self, hint : Hint, n : *Node) !void {
+			self.erase(n);
+			return self.finish_insert(hint, n) catch self.insert(n);
+		}
+
 		pub fn erase(self : *Self, node : *Node) void {
 			self.remove_from_tree(node);
+		}
+
+		fn last(self : Self) ?*Node {
+			var node = self.tree;
+			while (node) |n| {
+				if (n.r) |r| {
+					node = r;
+				} else return n;
+			}
+			return null;
 		}
 
 		/// AVL tree rotation, rotate the node `n` in the direction `direction` ("l" or "r")
@@ -185,6 +239,70 @@ pub fn AVL(comptime config : Config) type{
 			}
 		}
 
+		fn check_hint(self: *Self, hint : Hint, n : *Node) bool {
+			if (hint) |h| {
+				switch (compare_nodes(n, h)) {
+					.lt => {
+						const next = compare_nodes(n, next_node(h, "l"));
+						return if (config.unique) next == .gt else next != .lt;
+					},
+					.gt => {
+						const prev = compare_nodes(n, next_node(h, "r"));
+						return if (config.unique) prev == .lt else prev != .gt;
+					},
+					.eq => {
+						return !config.unique;
+					}
+				}
+			} else {
+				return self.tree == null;
+			}
+		}
+
+		fn add_between_nodes_unsafe(n : *Node, prev : ?*Node, next : ?*Node) void {
+			if (prev != null and prev.?.r == null) {
+				prev.?.r = n;
+				n.p = prev;
+			} else if (next != null and next.?.l == null) {
+				next.?.l = n;
+				n.p = next;
+			} else unreachable;
+		}
+
+		fn add_to_tree_hint(self: *Self, hint : Hint, n : *Node) !void {
+			if (hint) |h| {
+				switch (compare_nodes(n, h)) {
+					.lt => {
+						const prev = next_node(h, "l");
+						if (prev != null) {
+							const prev_compare = compare_nodes(n, prev.?);
+							if ((config.unique and prev_compare != .gt) or (!config.unique and prev_compare == .lt))
+								return error.InvalidHint;
+						}
+						add_between_nodes_unsafe(n, prev, h);
+					},
+					.gt => {
+						const next = next_node(h, "r");
+						if (next != null) {
+							const next_compare = compare_nodes(n, next.?);
+							if ((config.unique and next_compare != .lt) or (!config.unique and next_compare == .gt))
+								return error.InvalidHint;
+						}
+						add_between_nodes_unsafe(n, h, next);
+					},
+					.eq => {
+						if (config.unique)
+							return error.InvalidHint;
+						add_between_nodes_unsafe(n, h, next_node(h, "r"));
+					}
+				}
+			} else if (self.tree == null) {
+				self.tree = n;
+				n.p = null;
+			} else return error.InvalidHint;
+			self.fix(n, 1);
+		}
+
 		/// add the node `n` to the tree
 		fn add_to_tree(self: *Self, n: *Node) !void {
 			n.* = .{};
@@ -218,6 +336,8 @@ pub fn AVL(comptime config : Config) type{
 					}
 				}
 			} else {
+				if (self.tree != null)
+					@panic("invalid hint");
 				self.tree = n;
 				n.p = null;
 			}

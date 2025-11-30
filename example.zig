@@ -1,5 +1,5 @@
 const std = @import("std");
-const MultiIndex = @import("src/multi_index2.zig").MultiIndex;
+const MultiIndex = @import("src/multi_index.zig").MultiIndex;
 const avl = @import("src/indexes/avl.zig");
 
 const Human = struct {
@@ -37,7 +37,7 @@ pub fn main() !void {
     try humans.insert(.{ .name = "Nameless", .age = 0, .description = "Human description here" });
     try humans.insert(.{ .name = "Prankster Paul", .age = 16, .description = "Added hot sauce to the school’s fire extinguisher. No regrets." });
 
-    std.debug.print("find human named \"Code Lord 3000\" (we need him):\n", .{});
+    std.debug.print("find human named \"Code Lord 3000\" (we need them):\n", .{});
     if (humans.find(.name, "Code Lord 3000")) |v| {
         std.debug.print("=> {f}\n", .{v});
     }
