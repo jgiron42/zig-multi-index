@@ -1,5 +1,5 @@
 const std = @import("std");
-const MultiIndex = @import("src/multi_index2.zig").MultiIndex;
+const MultiIndex = @import("src/multi_index.zig").MultiIndex;
 const avl = @import("src/indexes/avl.zig");
 
 const Human = struct {
@@ -12,16 +12,15 @@ const Human = struct {
     }
 };
 
-fn compare_strings(l: []const u8, r: []const u8) std.math.Order {
-    return std.mem.order(u8, l, r);
-}
-
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{.safety = false}){};
-    defer _ = gpa.deinit();
+    var gpa = std.heap.GeneralPurposeAllocator(.{ .safety = true }){};
+    defer std.debug.print("leaks: {}\n", .{gpa.deinit()});
 
     var humans = MultiIndex(Human, .{
-        .name = .{ .unique = true, .compare_fn = compare_strings },
+        .name = .{
+            .unique = true,
+            .ordered = false,
+        },
         .age = .{},
     }).init(gpa.allocator());
 
@@ -37,13 +36,13 @@ pub fn main() !void {
     try humans.insert(.{ .name = "Nameless", .age = 0, .description = "Human description here" });
     try humans.insert(.{ .name = "Prankster Paul", .age = 16, .description = "Added hot sauce to the school’s fire extinguisher. No regrets." });
 
-    std.debug.print("find human named \"Code Lord 3000\" (we need him):\n", .{});
+    std.debug.print("find human named \"Code Lord 3000\" (we need them):\n", .{});
     if (humans.find(.name, "Code Lord 3000")) |v| {
         std.debug.print("=> {f}\n", .{v});
     }
     std.debug.print("\n", .{});
 
-    std.debug.print("find all humans aged 16 to 30 (to draft them for war against c++):\n", .{});
+    std.debug.print("find all humans aged 16 to 30 (to draft them for war against C++):\n", .{});
     var range = humans.range(.age, 16, 30);
     while (range.next()) |h| {
         std.debug.print("- {f}\n", .{h});
