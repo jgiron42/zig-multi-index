@@ -20,23 +20,34 @@ fn map_struct(S: anytype, f: fn (std.builtin.Type.StructField, anytype) ?std.bui
     } });
 }
 
+fn make_struct_field(name: [:0]const u8, T: type, default_val: ?T) std.builtin.Type.StructField {
+    return .{
+        .name = name,
+        .type = T,
+        .is_comptime = false,
+        .alignment = @alignOf(T),
+        .default_value_ptr = if (default_val) |val| &val else null,
+    };
+}
+
+fn default_order(T: type) fn (T, T) std.math.Order {
+    return struct {
+        pub fn f(l: T, r: T) std.math.Order {
+            return std.math.order(l, r);
+        }
+    }.f;
+}
+
 fn config_from_type(sf: std.builtin.Type.StructField, _: anytype) ?std.builtin.Type.StructField {
     const T = ?struct {
         unique: bool = false,
         ordered: bool = true,
-        compare_fn: ?fn (sf.type, sf.type) std.math.Order = null,
-        hash_context: type = std.hash_map.AutoContext(sf.type),
+        compare_fn: ?fn (sf.type, sf.type) std.math.Order = default_order(sf.type),
+        hash_context: type = if (sf.type == []const u8) std.hash_map.StringContext else std.hash_map.AutoContext(sf.type),
         custom: ?type = null,
         pub const Type = sf.type;
     };
-    const null_constant: T = null;
-    return .{
-        .name = sf.name,
-        .type = T,
-        .default_value_ptr = &null_constant,
-        .is_comptime = false,
-        .alignment = @alignOf(T),
-    };
+    return make_struct_field(sf.name, T, @as(T, null));
 }
 
 pub fn Config(comptime T: type) type {
@@ -55,10 +66,13 @@ pub fn MultiIndex(comptime T: type, comptime config: Config(T)) type {
             headers: Headers,
             value: T,
             pub const Headers = map_struct(@TypeOf(config), node_from_config, config);
-            pub fn get_header(self: *Node, field: Field) std.meta.fieldInfo(Headers, field).type {
-                return @field(self.headers, @tagName(field));
+            pub fn get_header(self: *Node, comptime field: Field) *std.meta.fieldInfo(Headers, field).type {
+                return &@field(self.headers, @tagName(field));
             }
-            pub fn from_header(_: Field, _: anytype) void {}
+            pub fn from_header(comptime field: Field, ptr: *std.meta.fieldInfo(Headers, field).type) *Node {
+                const header_struct: *Node.Headers = @fieldParentPtr(@tagName(field), ptr);
+                return @fieldParentPtr("headers", header_struct);
+            }
         };
 
         pub const Field = std.meta.FieldEnum(Indexes);
@@ -74,9 +88,10 @@ pub fn MultiIndex(comptime T: type, comptime config: Config(T)) type {
                 defer switch (self.field) {
                     inline else => |f| {
                         if (self.node) |current| {
-                            if (@field(current.headers, @tagName(f)).next()) |next_header| {
-                                self.node = @fieldParentPtr("headers", @as(*Node.Headers, @fieldParentPtr(@tagName(f), next_header)));
-                            } else self.node = null;
+                            self.node = if (current.get_header(f).next()) |next_header|
+                                Node.from_header(f, next_header)
+                            else
+                                null;
                         }
                     },
                 };
@@ -94,48 +109,41 @@ pub fn MultiIndex(comptime T: type, comptime config: Config(T)) type {
 
         const Self = @This();
 
+        // =========================================== General ===========================================
+
         pub fn init(allocator: std.mem.Allocator) Self {
-            var self = Self{
-                .allocator = allocator,
-            };
+            var self = Self{ .allocator = allocator };
             inline for (std.meta.fields(Indexes)) |f| {
-                @field(self.indexes, f.name) = @TypeOf(@field(self.indexes, f.name)).init(allocator);
+                const index = &@field(self.indexes, f.name);
+                index.* = @TypeOf(index.*).init(allocator);
             }
             return self;
         }
 
         pub fn deinit(self: *Self) void {
             self.reset();
-            // todo: destroy all nodes
             inline for (std.meta.fields(Indexes)) |f| {
-                @field(self.indexes, f.name).deinit();
+                const index = &@field(self.indexes, f.name);
+                index.deinit();
             }
         }
 
         pub fn reset(self: *Self) void {
-            inline for (std.meta.fields(Indexes)[0..std.meta.fields(Indexes).len - 1]) |f| {
+            inline for (std.meta.fields(Indexes)[0 .. std.meta.fields(Indexes).len - 1]) |f| {
                 @field(self.indexes, f.name).reset(self.allocator, null);
             }
             const lastField = std.meta.fields(Indexes)[std.meta.fields(Indexes).len - 1];
             const free_fn = struct {
-                pub fn f(allocator : std.mem.Allocator, field_node : *@FieldType(Node.Headers, lastField.name)) void {
-                    const node : *Node = @fieldParentPtr("headers", @as(*Node.Headers, @fieldParentPtr(lastField.name, field_node)));
+                pub fn f(allocator: std.mem.Allocator, field_node: *@FieldType(Node.Headers, lastField.name)) void {
+                    const node: *Node = Node.from_header(@field(Field, lastField.name), field_node);
                     allocator.destroy(node);
                 }
             }.f;
             @field(self.indexes, lastField.name).reset(self.allocator, free_fn);
         }
 
-        pub fn begin(self: Self, field: Field) Iterator {
-            return .{
-                .node = switch (field) {
-                    inline else => |f| if (@field(self.indexes, @tagName(f)).begin()) |b|
-                        @fieldParentPtr("headers", @as(*Node.Headers, @fieldParentPtr(@tagName(f), b)))
-                    else
-                        null,
-                },
-                .field = field,
-            };
+        pub fn count(self: Self) usize {
+            return self.item_count;
         }
 
         pub fn insert(self: *Self, value: T) !void {
@@ -148,7 +156,7 @@ pub fn MultiIndex(comptime T: type, comptime config: Config(T)) type {
 
             inline for (std.meta.fields(Indexes)) |f| {
                 const index = &@field(self.indexes, f.name);
-                const index_node = &@field(node.headers, f.name);
+                const index_node = node.get_header(@field(Field, f.name));
                 const hint = &@field(hints, f.name);
 
                 hint.* = try index.prepare_insert(index_node);
@@ -156,7 +164,7 @@ pub fn MultiIndex(comptime T: type, comptime config: Config(T)) type {
 
             inline for (std.meta.fields(Indexes)) |f| {
                 const index = &@field(self.indexes, f.name);
-                const index_node = &@field(node.headers, f.name);
+                const index_node = node.get_header(@field(Field, f.name));
                 const hint = @field(hints, f.name);
 
                 index.finish_insert(hint, index_node) catch unreachable;
@@ -165,9 +173,6 @@ pub fn MultiIndex(comptime T: type, comptime config: Config(T)) type {
             self.item_count += 1;
         }
 
-        // case 1: value change and need reorder/rehash -> hint
-        // case 2: value change but no reorder/rehash -> no hint
-        // case 3: value doesn't change -> no hint
         pub fn update(self: *Self, iterator: Iterator, value: T) !T {
             const node = iterator.node orelse return error.InvalidIterator;
             const Hints = map_struct(@TypeOf(config), hint_from_config, true);
@@ -177,8 +182,8 @@ pub fn MultiIndex(comptime T: type, comptime config: Config(T)) type {
 
             inline for (std.meta.fields(Indexes)) |f| {
                 const index = &@field(self.indexes, f.name);
-                const index_node = &@field(node.headers, f.name);
-                const index_tmp_node = &@field(tmp_node.headers, f.name);
+                const index_node = node.get_header(@field(Field, f.name));
+                const index_tmp_node = tmp_node.get_header(@field(Field, f.name));
                 const hint = &@field(hints, f.name);
 
                 hint.* = try index.prepare_update(index_node, index_tmp_node);
@@ -189,7 +194,7 @@ pub fn MultiIndex(comptime T: type, comptime config: Config(T)) type {
 
             inline for (std.meta.fields(Indexes)) |f| {
                 const index = &@field(self.indexes, f.name);
-                const index_node = &@field(node.headers, f.name);
+                const index_node = node.get_header(@field(Field, f.name));
                 const optional_hint = @field(hints, f.name);
 
                 if (optional_hint) |hint|
@@ -202,27 +207,37 @@ pub fn MultiIndex(comptime T: type, comptime config: Config(T)) type {
         pub fn erase_it(self: *Self, iterator: Iterator) void {
             const node = iterator.node orelse return;
             inline for (std.meta.fields(Indexes)) |f| {
-                @field(self.indexes, f.name).erase(&@field(node.headers, f.name));
+                const index = &@field(self.indexes, f.name);
+                const index_node = &@field(node.headers, f.name);
+                index.erase(index_node);
             }
             self.allocator.destroy(node);
         }
 
-        pub fn erase_range(self: *Self, r: Range) void {
-            var current = r.lower_bound orelse return;
-            while (current.node != null and (r.upper_bound == null or !current.eql(r.upper_bound.?))) {
-                const old = current;
-                _ = current.next();
-                self.erase_it(old);
-            }
+        // =========================================== Iterable ===========================================
+
+        pub fn begin(self: Self, field: Field) Iterator {
+            return .{
+                .node = switch (field) {
+                    inline else => |f| if (@field(self.indexes, @tagName(f)).begin()) |b|
+                        Node.from_header(@tagName(f), b)
+                    else
+                        null,
+                },
+                .field = field,
+            };
         }
 
         pub fn find_it(self: Self, comptime field: Field, v: key_type(field)) Iterator {
             var node: Node = undefined;
             @field(node.value, @tagName(field)) = v;
 
+            const index = &@field(self.indexes, @tagName(field));
+            const index_node = node.get_header(field);
+
             return Iterator{
-                .node = if (@field(self.indexes, @tagName(field)).find(&@field(node.headers, @tagName(field)))) |n|
-                    @fieldParentPtr("headers", @as(*Node.Headers, @fieldParentPtr(@tagName(field), n)))
+                .node = if (index.find(index_node)) |n|
+                    Node.from_header(field, n)
                 else
                     null,
                 .field = field,
@@ -233,13 +248,18 @@ pub fn MultiIndex(comptime T: type, comptime config: Config(T)) type {
             return self.find_it(field, v).peek();
         }
 
+        // =========================================== Ordered ===========================================
+
         pub fn lower_bound(self: Self, comptime field: Field, v: key_type(field)) Iterator {
             var node: Node = undefined;
             @field(node.value, @tagName(field)) = v;
 
+            const index = &@field(self.indexes, @tagName(field));
+            const index_node = node.get_header(field);
+
             return Iterator{
-                .node = if (@field(self.indexes, @tagName(field)).lower_bound(&@field(node.headers, @tagName(field)))) |n|
-                    @fieldParentPtr("headers", @as(*Node.Headers, @fieldParentPtr(@tagName(field), n)))
+                .node = if (index.lower_bound(index_node)) |n|
+                    Node.from_header(field, n)
                 else
                     null,
                 .field = field,
@@ -250,9 +270,12 @@ pub fn MultiIndex(comptime T: type, comptime config: Config(T)) type {
             var node: Node = undefined;
             @field(node.value, @tagName(field)) = v;
 
+            const index = &@field(self.indexes, @tagName(field));
+            const index_node = node.get_header(field);
+
             return Iterator{
-                .node = if (@field(self.indexes, @tagName(field)).upper_bound(&@field(node.headers, @tagName(field)))) |n|
-                    @fieldParentPtr("headers", @as(*Node.Headers, @fieldParentPtr(@tagName(field), n)))
+                .node = if (index.upper_bound(index_node)) |n|
+                    Node.from_header(field, n)
                 else
                     null,
                 .field = field,
@@ -273,8 +296,13 @@ pub fn MultiIndex(comptime T: type, comptime config: Config(T)) type {
             return self.range(field, v, v);
         }
 
-        pub fn count(self: Self) usize {
-            return self.item_count;
+        pub fn erase_range(self: *Self, r: Range) void {
+            var current = r.lower_bound orelse return;
+            while (current.node != null and (r.upper_bound == null or !current.eql(r.upper_bound.?))) {
+                const old = current;
+                _ = current.next();
+                self.erase_it(old);
+            }
         }
 
         pub fn print(self: *Self) void {
@@ -283,65 +311,35 @@ pub fn MultiIndex(comptime T: type, comptime config: Config(T)) type {
             }
         }
 
+        // =========================================== Helpers ===========================================
+
         fn key_type(comptime field: Field) type {
             return @FieldType(T, @tagName(field));
         }
 
-        fn node_of_index_node(comptime fieldName: []const u8, indexNode : anytype) *Node {
-            return @as(*Node, @fieldParentPtr("headers", @as(*Node.Headers, @fieldParentPtr(fieldName, indexNode))));
+        fn get_adaptor(f: []const u8) fn (*@FieldType(Node.Headers, f)) @FieldType(T, f) {
+            return struct {
+                pub fn adaptor(node_header: *@FieldType(Node.Headers, f)) @FieldType(T, f) {
+                    const val: T = Node.from_header(@field(Field, f), node_header).value;
+                    return @field(val, f);
+                }
+            }.adaptor;
         }
 
         fn index_from_config(sf: std.builtin.Type.StructField, _: anytype) ?std.builtin.Type.StructField {
             if (@field(config, sf.name)) |c| {
                 const index_type: type = c.custom orelse if (c.ordered)
-                    avl.AVL(.{
-                        .compare = struct {
-                            pub fn compare(left_node: *avl.Node, right_node: *avl.Node) std.math.Order {
-                                const left_val: T = node_of_index_node(sf.name, left_node).value;
-                                const right_val: T = node_of_index_node(sf.name, right_node).value;
-                                return (c.compare_fn orelse std.math.order)(@field(left_val, sf.name), @field(right_val, sf.name));
-                            }
-                        }.compare,
-                        .unique = c.unique,
-                    })
+                    avl.AVL(avl.DefaultConfig(T, sf.name, get_adaptor(sf.name), c))
                 else
-                    hash_table.HashTable(.{
-                        .Context = struct {
-                            subContext : c.hash_context = .{},
-                            pub fn hash(self: @This(), node: *hash_table.Node) u64 {
-                                const val: T = node_of_index_node(sf.name, node).value;
-                                return self.subContext.hash(@field(val, sf.name));
-                            }
-                            pub fn eql(self: @This(), left_node: *hash_table.Node, right_node: *hash_table.Node) bool {
-                                const left_val: T = node_of_index_node(sf.name, left_node).value;
-                                const right_val: T = node_of_index_node(sf.name, right_node).value;
-                                return self.subContext.eql(@field(left_val, sf.name), @field(right_val, sf.name));
-                            }
-                        },
-                        .unique = c.unique,
-                    });
-                const default_value = index_type{ .allocator = undefined };
-                return .{
-                    .name = sf.name,
-                    .type = index_type,
-                    .is_comptime = false,
-                    .alignment = @alignOf(index_type),
-                    .default_value_ptr = &default_value,
-                };
+                    hash_table.HashTable(hash_table.DefaultConfig(T, sf.name, get_adaptor(sf.name), c));
+                return make_struct_field(sf.name, index_type, .{ .allocator = undefined });
             } else return null;
         }
 
         fn node_from_config(sf: std.builtin.Type.StructField, _: anytype) ?std.builtin.Type.StructField {
             if (@field(config, sf.name)) |field| {
                 const Container = if (field.ordered) avl else hash_table;
-                const default_value = Container.Node{};
-                return .{
-                    .name = sf.name,
-                    .type = Container.Node,
-                    .is_comptime = false,
-                    .alignment = @alignOf(Container.Node),
-                    .default_value_ptr = &default_value,
-                };
+                return make_struct_field(sf.name, Container.Node, .{});
             } else return null;
         }
 
@@ -349,13 +347,7 @@ pub fn MultiIndex(comptime T: type, comptime config: Config(T)) type {
             if (@field(config, sf.name)) |field| {
                 const Container = if (field.ordered) avl else hash_table;
                 const t = if (is_optional) ?Container.Hint else Container.Hint;
-                return .{
-                    .name = sf.name,
-                    .type = t,
-                    .is_comptime = false,
-                    .alignment = @alignOf(t),
-                    .default_value_ptr = null,
-                };
+                return make_struct_field(sf.name, t, null);
             } else return null;
         }
     };

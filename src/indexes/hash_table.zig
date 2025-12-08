@@ -11,19 +11,38 @@ pub const Node = struct {
 pub const Hint = *?*Node;
 
 const Config = struct {
-    Context : type,
+    Context: type,
     unique: bool,
     max_load_factor: f32 = 2,
     resize_factor: f32 = 1.5,
     base_cap: usize = 10,
 };
+pub fn DefaultConfig(
+    T: type,
+    field: []const u8,
+    adaptor: fn (*Node) @FieldType(T, field),
+    config: @FieldType(@import("../multi_index.zig").Config(T), field),
+) Config {
+    return .{
+        .Context = struct {
+            subContext: config.?.hash_context = .{},
+            pub fn hash(self: @This(), node: *Node) u64 {
+                return self.subContext.hash(adaptor(node));
+            }
+            pub fn eql(self: @This(), left_node: *Node, right_node: *Node) bool {
+                return self.subContext.eql(adaptor(left_node), adaptor(right_node));
+            }
+        },
+        .unique = config.?.unique,
+    };
+}
 
 pub fn HashTable(comptime config: Config) type {
     return struct {
         allocator: std.mem.Allocator,
         table: []?*Node = &.{},
         size: usize = 0,
-        hash_context : config.Context = .{},
+        hash_context: config.Context = .{},
 
         const Self = @This();
 
@@ -38,7 +57,7 @@ pub fn HashTable(comptime config: Config) type {
             self.table = &.{};
         }
 
-        pub fn reset(self: *Self, allocator : std.mem.Allocator, comptime free_fn_opt : ?fn (allocator : std.mem.Allocator, *Node) void) void {
+        pub fn reset(self: *Self, allocator: std.mem.Allocator, comptime free_fn_opt: ?fn (allocator: std.mem.Allocator, *Node) void) void {
             if (free_fn_opt) |free_fn| {
                 for (self.table) |opt_node| {
                     var current = opt_node;
@@ -53,12 +72,12 @@ pub fn HashTable(comptime config: Config) type {
             self.size = 0;
         }
 
-        fn get_bucket_idx(self: Self, node : *Node) usize {
+        fn get_bucket_idx(self: Self, node: *Node) usize {
             return self.hash_context.hash(node) % self.table.len;
         }
 
         // todo: make this function safe
-        fn rehash(self: *Self, new_cap : usize) std.mem.Allocator.Error!void {
+        fn rehash(self: *Self, new_cap: usize) std.mem.Allocator.Error!void {
             const new_table = try self.allocator.alloc(?*Node, new_cap);
             @memset(new_table, null);
             var new_self = Self{
@@ -100,10 +119,10 @@ pub fn HashTable(comptime config: Config) type {
             n.next_ = null;
         }
 
-        pub fn prepare_insert(self: *Self, n: *Node) (std.mem.Allocator.Error || error{ Duplicate })!Hint {
+        pub fn prepare_insert(self: *Self, n: *Node) (std.mem.Allocator.Error || error{Duplicate})!Hint {
             try self.ensure_load_factor();
             const bucket_idx = self.get_bucket_idx(n);
-            if (config.unique and find_in_bucket(self.table[bucket_idx], n) != null)
+            if (config.unique and self.find_in_bucket(self.table[bucket_idx], n) != null)
                 return error.Duplicate;
             return &self.table[bucket_idx];
         }
@@ -118,7 +137,7 @@ pub fn HashTable(comptime config: Config) type {
             self.size += 1;
         }
 
-        fn is_same_bucket(self: Self, a : *Node, b: *Node) bool {
+        fn is_same_bucket(self: Self, a: *Node, b: *Node) bool {
             return self.get_bucket_idx(a) == self.get_bucket_idx(b);
         }
 
@@ -151,8 +170,8 @@ pub fn HashTable(comptime config: Config) type {
                 }
             }
         }
-        
-        fn find_in_bucket(self: Self, bucket : ?*Node, node : *Node) ?*Node {
+
+        fn find_in_bucket(self: Self, bucket: ?*Node, node: *Node) ?*Node {
             var tmp = bucket;
             while (tmp) |current| {
                 if (self.hash_context.eql(current, node)) {

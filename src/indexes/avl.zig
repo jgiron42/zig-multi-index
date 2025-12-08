@@ -49,6 +49,22 @@ const Config = struct {
     unique: bool,
 };
 
+pub fn DefaultConfig(
+    T: type,
+    field: []const u8,
+    adaptor: fn (*Node) @FieldType(T, field),
+    config: @FieldType(@import("../multi_index.zig").Config(T), field),
+) Config {
+    return .{
+        .compare = struct {
+            pub fn compare(left_node: *Node, right_node: *Node) std.math.Order {
+                return config.?.compare_fn.?(adaptor(left_node), adaptor(right_node));
+            }
+        }.compare,
+        .unique = config.?.unique,
+    };
+}
+
 pub fn AVL(comptime config: Config) type {
     return struct {
         allocator: std.mem.Allocator,
@@ -64,7 +80,7 @@ pub fn AVL(comptime config: Config) type {
 
         pub fn deinit(_: *Self) void {}
 
-        pub fn reset(self: *Self, allocator : std.mem.Allocator, comptime free_fn_opt : ?fn (std.mem.Allocator, *Node) void) void {
+        pub fn reset(self: *Self, allocator: std.mem.Allocator, comptime free_fn_opt: ?fn (std.mem.Allocator, *Node) void) void {
             var current = self.tree orelse return;
             if (free_fn_opt) |free_fn| {
                 while (true) {
