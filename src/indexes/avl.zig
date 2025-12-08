@@ -49,20 +49,21 @@ const Config = struct {
     unique: bool,
 };
 
-pub fn DefaultConfig(
+pub fn FromTypeConfig(
     T: type,
-    field: []const u8,
-    adaptor: fn (*Node) @FieldType(T, field),
-    config: @FieldType(@import("../multi_index.zig").Config(T), field),
-) Config {
-    return .{
+    adaptor: fn (*Node) T,
+    config: @import("../config.zig").TypeConfig(T),
+) type {
+    if (config.compare_fn == null)
+        @compileError("Index AVL needs a compare_fn");
+    return AVL(.{
         .compare = struct {
             pub fn compare(left_node: *Node, right_node: *Node) std.math.Order {
-                return config.?.compare_fn.?(adaptor(left_node), adaptor(right_node));
+                return config.compare_fn.?(adaptor(left_node), adaptor(right_node));
             }
         }.compare,
-        .unique = config.?.unique,
-    };
+        .unique = config.unique,
+    });
 }
 
 pub fn AVL(comptime config: Config) type {

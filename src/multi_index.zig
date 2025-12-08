@@ -1,58 +1,11 @@
 const std = @import("std");
 const avl = @import("indexes/avl.zig");
 const hash_table = @import("indexes/hash_table.zig");
+const utils = @import("utils.zig");
 
-fn map_struct(S: anytype, f: fn (std.builtin.Type.StructField, anytype) ?std.builtin.Type.StructField, data: anytype) type {
-    const infos = @typeInfo(S);
-    var fields: [infos.@"struct".fields.len]std.builtin.Type.StructField = undefined;
-    var len = 0;
-    for (infos.@"struct".fields) |field| {
-        if (f(field, data)) |new_field| {
-            fields[len] = new_field;
-            len += 1;
-        }
-    }
-    return @Type(std.builtin.Type{ .@"struct" = .{
-        .layout = .auto,
-        .fields = fields[0..len],
-        .decls = &.{},
-        .is_tuple = false,
-    } });
-}
+pub const IndexEnum = @import("indexes.zig").IndexEnum;
 
-fn make_struct_field(name: [:0]const u8, T: type, default_val: ?T) std.builtin.Type.StructField {
-    return .{
-        .name = name,
-        .type = T,
-        .is_comptime = false,
-        .alignment = @alignOf(T),
-        .default_value_ptr = if (default_val) |val| &val else null,
-    };
-}
-
-fn default_order(T: type) fn (T, T) std.math.Order {
-    return struct {
-        pub fn f(l: T, r: T) std.math.Order {
-            return std.math.order(l, r);
-        }
-    }.f;
-}
-
-fn config_from_type(sf: std.builtin.Type.StructField, _: anytype) ?std.builtin.Type.StructField {
-    const T = ?struct {
-        unique: bool = false,
-        ordered: bool = true,
-        compare_fn: ?fn (sf.type, sf.type) std.math.Order = default_order(sf.type),
-        hash_context: type = if (sf.type == []const u8) std.hash_map.StringContext else std.hash_map.AutoContext(sf.type),
-        custom: ?type = null,
-        pub const Type = sf.type;
-    };
-    return make_struct_field(sf.name, T, @as(T, null));
-}
-
-pub fn Config(comptime T: type) type {
-    return map_struct(T, config_from_type, {});
-}
+pub const Config = @import("config.zig").Config;
 
 pub fn MultiIndex(comptime T: type, comptime config: Config(T)) type {
     return struct {
@@ -60,12 +13,12 @@ pub fn MultiIndex(comptime T: type, comptime config: Config(T)) type {
         indexes: Indexes = .{},
         item_count: usize = 0,
 
-        const Indexes = map_struct(@TypeOf(config), index_from_config, config);
+        const Indexes = utils.map_struct(@TypeOf(config), index_from_config, config);
 
         const Node = struct {
             headers: Headers,
             value: T,
-            pub const Headers = map_struct(@TypeOf(config), node_from_config, config);
+            pub const Headers = utils.map_struct(@TypeOf(config), node_from_config, config);
             pub fn get_header(self: *Node, comptime field: Field) *std.meta.fieldInfo(Headers, field).type {
                 return &@field(self.headers, @tagName(field));
             }
@@ -76,6 +29,7 @@ pub fn MultiIndex(comptime T: type, comptime config: Config(T)) type {
         };
 
         pub const Field = std.meta.FieldEnum(Indexes);
+
         pub const Range = @import("view.zig").BoundedIterator(Iterator);
 
         pub const Iterator = struct {
@@ -151,7 +105,7 @@ pub fn MultiIndex(comptime T: type, comptime config: Config(T)) type {
             node.value = value;
             node.headers = .{};
 
-            const Hints = map_struct(@TypeOf(config), hint_from_config, false);
+            const Hints = utils.map_struct(@TypeOf(config), hint_from_config, false);
             var hints: Hints = undefined;
 
             inline for (std.meta.fields(Indexes)) |f| {
@@ -175,7 +129,7 @@ pub fn MultiIndex(comptime T: type, comptime config: Config(T)) type {
 
         pub fn update(self: *Self, iterator: Iterator, value: T) !T {
             const node = iterator.node orelse return error.InvalidIterator;
-            const Hints = map_struct(@TypeOf(config), hint_from_config, true);
+            const Hints = utils.map_struct(@TypeOf(config), hint_from_config, true);
             var hints: Hints = undefined;
 
             var tmp_node = Node{ .value = value, .headers = .{} };
@@ -327,27 +281,25 @@ pub fn MultiIndex(comptime T: type, comptime config: Config(T)) type {
         }
 
         fn index_from_config(sf: std.builtin.Type.StructField, _: anytype) ?std.builtin.Type.StructField {
-            if (@field(config, sf.name)) |c| {
-                const index_type: type = c.custom orelse if (c.ordered)
-                    avl.AVL(avl.DefaultConfig(T, sf.name, get_adaptor(sf.name), c))
-                else
-                    hash_table.HashTable(hash_table.DefaultConfig(T, sf.name, get_adaptor(sf.name), c));
-                return make_struct_field(sf.name, index_type, .{ .allocator = undefined });
+            if (@field(config, sf.name)) |tc| {
+                const index_type: type = tc.custom orelse
+                IndexEnum.from_type_config(@TypeOf(tc).Type, tc).get().FromTypeConfig(@TypeOf(tc).Type, get_adaptor(sf.name), tc);
+                return utils.make_struct_field(sf.name, index_type, .{ .allocator = undefined });
             } else return null;
         }
 
         fn node_from_config(sf: std.builtin.Type.StructField, _: anytype) ?std.builtin.Type.StructField {
-            if (@field(config, sf.name)) |field| {
-                const Container = if (field.ordered) avl else hash_table;
-                return make_struct_field(sf.name, Container.Node, .{});
+            if (@field(config, sf.name)) |tc| {
+                const Container = IndexEnum.from_type_config(@TypeOf(tc).Type, tc).get();
+                return utils.make_struct_field(sf.name, Container.Node, .{});
             } else return null;
         }
 
         fn hint_from_config(sf: std.builtin.Type.StructField, is_optional: anytype) ?std.builtin.Type.StructField {
-            if (@field(config, sf.name)) |field| {
-                const Container = if (field.ordered) avl else hash_table;
+            if (@field(config, sf.name)) |tc| {
+                const Container = IndexEnum.from_type_config(@TypeOf(tc).Type, tc).get();
                 const t = if (is_optional) ?Container.Hint else Container.Hint;
-                return make_struct_field(sf.name, t, null);
+                return utils.make_struct_field(sf.name, t, null);
             } else return null;
         }
     };

@@ -17,15 +17,17 @@ const Config = struct {
     resize_factor: f32 = 1.5,
     base_cap: usize = 10,
 };
-pub fn DefaultConfig(
+
+pub fn FromTypeConfig(
     T: type,
-    field: []const u8,
-    adaptor: fn (*Node) @FieldType(T, field),
-    config: @FieldType(@import("../multi_index.zig").Config(T), field),
-) Config {
-    return .{
+    adaptor: fn (*Node) T,
+    config: @import("../config.zig").TypeConfig(T),
+) type {
+    if (config.hash_context == null)
+        @compileError("Index hash_table needs a hash_context");
+    return HashTable(.{
         .Context = struct {
-            subContext: config.?.hash_context = .{},
+            subContext: config.hash_context.? = .{},
             pub fn hash(self: @This(), node: *Node) u64 {
                 return self.subContext.hash(adaptor(node));
             }
@@ -33,8 +35,8 @@ pub fn DefaultConfig(
                 return self.subContext.eql(adaptor(left_node), adaptor(right_node));
             }
         },
-        .unique = config.?.unique,
-    };
+        .unique = config.unique,
+    });
 }
 
 pub fn HashTable(comptime config: Config) type {
