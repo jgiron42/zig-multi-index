@@ -267,68 +267,6 @@ MultiIndex(Person, .{
 })
 ```
 
-## Internals: The Metaprogramming
-
-### `map_struct`: Generic Struct Mapping
-
-```zig
-pub fn map_struct(
-    S: anytype,
-    f: fn (StructField, anytype) ?StructField,
-    data: anytype
-) type
-```
-
-Iterates over struct fields, applies a filter function `f`, and reconstructs a new struct type from the results. Used to generate `Indexes`, `Node.Headers`, and `Hints` structures.
-
-### `index_from_config`: Index Type Factory
-
-```zig
-fn index_from_config(sf: StructField, _: anytype) ?StructField {
-    if (@field(config, sf.name)) |tc| {
-        const index_type: type = tc.custom orelse
-            IndexEnum.from_type_config(Type, tc).get()
-                .FromTypeConfig(Type, get_adaptor(sf.name), tc);
-        return make_struct_field(sf.name, index_type, ...);
-    }
-    return null;
-}
-```
-
-For each indexed field, generates the appropriate index type (AVL or hash table) parametrized with a field-extraction **adaptor function**. The adaptor knows how to extract the field value from a node header and return it to the index's compare/hash functions.
-
-### `get_adaptor`: Field Extraction Closure
-
-```zig
-fn get_adaptor(f: []const u8) fn (*FieldType(Headers, f)) FieldType(T, f) {
-    return struct {
-        pub fn adaptor(node_header: *FieldType(Headers, f)) FieldType(T, f) {
-            const node = Node.from_header(@field(Field, f), node_header);
-            return @field(node.value, f);
-        }
-    }.adaptor;
-}
-```
-
-Creates a closure that extracts a field value from a node given a pointer to that field's embedded header. The index calls this adaptor during comparisons/hashing without knowing about the parent struct.
-
-### `from_header`/`get_header`: Intrusive Navigation
-
-```zig
-pub fn get_header(self: *Node, comptime field: Field) 
-    *FieldType(Headers, field) 
-{
-    return &@field(self.headers, @tagName(field));
-}
-
-pub fn from_header(comptime field: Field, ptr: *FieldType(Headers, field)) *Node {
-    const header_struct: *Node.Headers = @fieldParentPtr(@tagName(field), ptr);
-    return @fieldParentPtr("headers", header_struct);
-}
-```
-
-`@fieldParentPtr` is the key Zig intrinsic: given a pointer to a struct field, compute a pointer to the containing struct. This recovers the full node from any index's header pointer, enabling intrusive data structures.
-
 ## When to Use
 
 **zig-multi-index is ideal for:**
