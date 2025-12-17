@@ -75,7 +75,7 @@ pub fn HashTable(comptime config: Config) type {
         }
 
         fn get_bucket_idx(self: Self, node: *Node) usize {
-            return self.hash_context.hash(node) % self.table.len;
+            return @as(usize, @truncate(self.hash_context.hash(node))) % self.table.len;
         }
 
         // todo: make this function safe
@@ -131,7 +131,7 @@ pub fn HashTable(comptime config: Config) type {
 
         pub fn finish_insert(self: *Self, hint: Hint, n: *Node) !void {
             if (hint.*) |hint_node| {
-                n.next_ = hint_node.next_;
+                n.next_ = hint_node;
             } else {
                 n.next_ = null;
             }

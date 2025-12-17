@@ -5,5 +5,7 @@
         "build.zig",
         "build.zig.zon",
         "src",
+        "README.md",
     },
+    .fingerprint = 0x5f2c2baaf5829e1,
 }

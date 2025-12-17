@@ -59,6 +59,10 @@ pub fn MultiIndex(comptime T: type, comptime config: Config(T)) type {
             pub fn eql(self: Iterator, other: Iterator) bool {
                 return self.node == other.node;
             }
+
+            pub fn switch_field(self: *Iterator, field: Field) void {
+                self.field = field;
+            }
         };
 
         const Self = @This();
@@ -194,7 +198,7 @@ pub fn MultiIndex(comptime T: type, comptime config: Config(T)) type {
                     Node.from_header(field, n)
                 else
                     null,
-                .field = field,
+                .field = .pw_name,
             };
         }
 
@@ -283,7 +287,7 @@ pub fn MultiIndex(comptime T: type, comptime config: Config(T)) type {
         fn index_from_config(sf: std.builtin.Type.StructField, _: anytype) ?std.builtin.Type.StructField {
             if (@field(config, sf.name)) |tc| {
                 const index_type: type = tc.custom orelse
-                IndexEnum.from_type_config(@TypeOf(tc).Type, tc).get().FromTypeConfig(@TypeOf(tc).Type, get_adaptor(sf.name), tc);
+                    IndexEnum.from_type_config(@TypeOf(tc).Type, tc).get().FromTypeConfig(@TypeOf(tc).Type, get_adaptor(sf.name), tc);
                 return utils.make_struct_field(sf.name, index_type, .{ .allocator = undefined });
             } else return null;
         }

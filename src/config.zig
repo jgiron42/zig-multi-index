@@ -9,7 +9,7 @@ fn default_order(T: type) fn (T, T) std.math.Order {
     }.f;
 }
 
-pub fn TypeConfig(T : type) type {
+pub fn TypeConfig(T: type) type {
     return struct {
         unique: bool = false,
         ordered: bool = true,
