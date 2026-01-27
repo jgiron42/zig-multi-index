@@ -8,7 +8,11 @@ pub const Node = struct {
     }
 };
 
-pub const Hint = *?*Node;
+pub const Hint = struct {
+    dst: LinkRef,
+    src: ?LinkRef = null,
+    pub const LinkRef = *?*Node;
+};
 
 const Config = struct {
     Context: type,
@@ -78,7 +82,6 @@ pub fn HashTable(comptime config: Config) type {
             return @as(usize, @truncate(self.hash_context.hash(node))) % self.table.len;
         }
 
-        // todo: make this function safe
         fn rehash(self: *Self, new_cap: usize) std.mem.Allocator.Error!void {
             const new_table = try self.allocator.alloc(?*Node, new_cap);
             @memset(new_table, null);
@@ -90,8 +93,8 @@ pub fn HashTable(comptime config: Config) type {
             for (self.table) |opt_node| {
                 var current = opt_node;
                 while (current) |node| {
-                    try new_self.insert(node);
                     current = node.next_;
+                    try new_self.unsafe_insert(node);
                 }
             }
             self.deinit();
@@ -106,36 +109,29 @@ pub fn HashTable(comptime config: Config) type {
             }
         }
 
-        pub fn insert(self: *Self, n: *Node) std.mem.Allocator.Error!void {
-            try self.ensure_load_factor();
-            const bucket_idx = self.get_bucket_idx(n);
-            if (self.table[bucket_idx]) |bucket| {
-                var tmp = bucket;
-                while (tmp.next_) |next| {
-                    tmp = next;
-                }
-                tmp.next_ = n;
-            } else {
-                self.table[bucket_idx] = n;
-            }
-            n.next_ = null;
+        pub fn unsafe_insert(self: *Self, n: *Node) std.mem.Allocator.Error!void {
+            const hint = self.prepare_insert(n) catch |e| switch (e) {
+                error.Duplicate => unreachable,
+                else => |err| return err,
+            };
+            return self.finish_insert(hint, n);
         }
 
         pub fn prepare_insert(self: *Self, n: *Node) (std.mem.Allocator.Error || error{Duplicate})!Hint {
             try self.ensure_load_factor();
             const bucket_idx = self.get_bucket_idx(n);
-            if (config.unique and self.find_in_bucket(self.table[bucket_idx], n) != null)
+            if (self.find_in_bucket(self.table[bucket_idx], n)) |node| {
+                if (config.unique)
                 return error.Duplicate;
-            return &self.table[bucket_idx];
+                return Hint{ .dst = &node.next_ };
+            } else {
+                return Hint{ .dst = &self.table[bucket_idx] };
+            }
         }
 
-        pub fn finish_insert(self: *Self, hint: Hint, n: *Node) !void {
-            if (hint.*) |hint_node| {
-                n.next_ = hint_node;
-            } else {
-                n.next_ = null;
-            }
-            hint.* = n;
+        pub fn finish_insert(self: *Self, hint: Hint, n: *Node) error{}!void {
+            n.next_ = hint.dst.*;
+            hint.dst.* = n;
             self.size += 1;
         }
 
@@ -144,33 +140,50 @@ pub fn HashTable(comptime config: Config) type {
         }
 
         pub fn prepare_update(self: *Self, n: *Node, new_node: *Node) !?Hint {
-            if (self.hash_context.eql(n, new_node) or self.is_same_bucket(n, new_node))
+            if (self.hash_context.eql(n, new_node)) // or self.is_same_bucket(n, new_node)
                 return null;
-            return self.prepare_insert(new_node) catch |e| e;
+            var tmp = try self.prepare_insert(new_node);
+            tmp.src = self.get_ref(n) orelse @panic("Node not found");
+            return tmp;
         }
 
         pub fn finish_update(self: *Self, hint: Hint, n: *Node) !void {
-            self.erase(n);
-            return self.finish_insert(hint, n) catch self.insert(n);
+            if (hint.src == null)
+                @panic("Invalid hint");
+            if (hint.src.? == hint.dst)
+                return;
+            self.erase_ref(hint.src.?);
+            return self.finish_insert(hint, n) catch unreachable;
         }
 
         pub fn erase(self: *Self, node: *Node) void {
-            const bucket = self.get_bucket_idx(node);
-            if (self.table[bucket]) |first| {
-                if (self.hash_context.eql(first, node)) {
-                    self.table[bucket] = first.next_;
+            self.erase_ref(self.get_ref(node) orelse @panic("Node not found"));
+        }
+
+        pub fn erase_ref(self: *Self, ref: Hint.LinkRef) void {
+            const node = ref.*.?;
+            ref.* = node.next_;
+            node.next_ = null;
+            self.size -= 1;
+        }
+
+        fn get_ref(self: Self, node: *Node) ?Hint.LinkRef {
+            const bucket_idx = self.get_bucket_idx(node);
+            if (self.table[bucket_idx]) |first| {
+                if (first == node) {
+                    return &self.table[bucket_idx];
                 } else {
                     var tmp = first;
                     while (tmp.next_) |next| {
-                        if (self.hash_context.eql(next, node)) {
-                            tmp.next_ = next.next_;
-                            return;
+                        if (next == node) {
+                            return &tmp.next_;
                         } else {
                             tmp = next;
                         }
                     }
                 }
             }
+            return null;
         }
 
         fn find_in_bucket(self: Self, bucket: ?*Node, node: *Node) ?*Node {
@@ -189,6 +202,17 @@ pub fn HashTable(comptime config: Config) type {
             return self.find_in_bucket(self.table[bucket_idx], node);
         }
 
-        pub fn print(_: *Self) void {}
+
+        pub fn print(self: *Self) void {
+            std.debug.print("Hash Table:\n", .{});
+            for (self.table) |opt_node| {
+                var current = opt_node;
+                while (current) |node| {
+                    std.debug.print("0x{x:0>16} -> ", .{@as(usize, @intFromPtr(node))});
+                    current = node.next_;
+                }
+                std.debug.print("null\n", .{});
+            }
+        }
     };
 }
