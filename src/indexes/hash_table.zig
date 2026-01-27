@@ -122,7 +122,7 @@ pub fn HashTable(comptime config: Config) type {
             const bucket_idx = self.get_bucket_idx(n);
             if (self.find_in_bucket(self.table[bucket_idx], n)) |node| {
                 if (config.unique)
-                return error.Duplicate;
+                    return error.Duplicate;
                 return Hint{ .dst = &node.next_ };
             } else {
                 return Hint{ .dst = &self.table[bucket_idx] };
@@ -201,7 +201,6 @@ pub fn HashTable(comptime config: Config) type {
             const bucket_idx = self.get_bucket_idx(node);
             return self.find_in_bucket(self.table[bucket_idx], node);
         }
-
 
         pub fn print(self: *Self) void {
             std.debug.print("Hash Table:\n", .{});

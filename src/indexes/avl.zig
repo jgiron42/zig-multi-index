@@ -138,7 +138,7 @@ pub fn AVL(comptime config: Config) type {
             } else unreachable;
         }
 
-        pub fn finish_insert(self: *Self, hint: Hint, n: *Node) !void {
+        pub fn finish_insert(self: *Self, hint: Hint, n: *Node) error{InvalidHint}!void {
             return self.add_to_tree_hint(hint, n);
         }
 
@@ -308,7 +308,7 @@ pub fn AVL(comptime config: Config) type {
             } else unreachable;
         }
 
-        fn add_to_tree_hint(self: *Self, hint: Hint, n: *Node) !void {
+        fn add_to_tree_hint(self: *Self, hint: Hint, n: *Node) error{InvalidHint}!void {
             if (hint) |h| {
                 switch (compare_nodes(n, h)) {
                     .lt => {
@@ -448,7 +448,14 @@ pub fn AVL(comptime config: Config) type {
                         } else return current_lower_bound;
                     },
                     .eq => {
-                        return current_node;
+                        if (config.unique) {
+                            return current_node;
+                        } else {
+                            current_lower_bound = current_node;
+                            if (current_node.l) |l| {
+                                current_node = l;
+                            } else return current_lower_bound;
+                        }
                     },
                 }
             }
