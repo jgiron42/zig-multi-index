@@ -1,12 +1,44 @@
 const std = @import("std");
 const utils = @import("utils.zig");
 
-fn default_order(T: type) fn (T, T) std.math.Order {
-    return struct {
-        pub fn f(l: T, r: T) std.math.Order {
-            return std.math.order(l, r);
-        }
-    }.f;
+fn is_orderable(T: type) bool {
+    return switch (@typeInfo(T)) {
+        .int, .float, .bool, .@"enum", .error_set => true,
+        .pointer => |t| switch (t.size) {
+            .one, .many, .c => true,
+            else => false,
+        },
+        else => false,
+    };
+}
+
+fn is_slice(T: type) bool {
+    return switch (@typeInfo(T)) {
+        .pointer => |t| switch (t.size) {
+            .slice => true,
+            else => false,
+        },
+        else => false,
+    };
+}
+
+fn default_order(T: type) ?fn (T, T) std.math.Order {
+    if (is_orderable(T)) {
+        return struct {
+            pub fn f(l: T, r: T) std.math.Order {
+                return std.math.order(l, r);
+            }
+        }.f;
+    } else if (is_slice(T) and is_orderable(@typeInfo(T).pointer.child)) {
+        const Child = @typeInfo(T).pointer.child;
+        return struct {
+            pub fn f(l: T, r: T) std.math.Order {
+                return std.mem.order(Child, l, r);
+            }
+        }.f;
+    } else {
+        return null;
+    }
 }
 
 pub fn TypeConfig(T: type) type {
