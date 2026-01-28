@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Joachim Giron
+
 const std = @import("std");
 
 pub const Node = struct {

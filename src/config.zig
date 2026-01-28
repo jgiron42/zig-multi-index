@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Joachim Giron
 const std = @import("std");
 const utils = @import("utils.zig");
 

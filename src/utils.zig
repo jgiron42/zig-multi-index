@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Joachim Giron
 const std = @import("std");
 
 pub fn map_struct(S: anytype, f: fn (std.builtin.Type.StructField, anytype) ?std.builtin.Type.StructField, data: anytype) type {

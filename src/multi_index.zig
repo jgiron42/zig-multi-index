@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Joachim Giron
 const std = @import("std");
 const avl = @import("indexes/avl.zig");
 const hash_table = @import("indexes/hash_table.zig");
@@ -126,7 +128,7 @@ pub fn MultiIndex(comptime T: type, comptime config: Config(T)) type {
                 const index_node = node.get_header(@field(Field, f.name));
                 const hint = @field(hints, f.name);
 
-                index.finish_insert(hint, index_node) catch unreachable;
+                index.finish_insert(hint, index_node) catch @panic("Fatal error! Insertion fails despite prepare");
             }
 
             self.item_count += 1;
@@ -157,7 +159,7 @@ pub fn MultiIndex(comptime T: type, comptime config: Config(T)) type {
                 const optional_hint = @field(hints, f.name);
 
                 if (optional_hint) |hint|
-                    index.finish_update(hint, index_node) catch unreachable;
+                    index.finish_update(hint, index_node) catch @panic("Fatal error! Update fails despite prepare");
             }
 
             return old_value;
@@ -167,10 +169,11 @@ pub fn MultiIndex(comptime T: type, comptime config: Config(T)) type {
             const node = iterator.node orelse return;
             inline for (std.meta.fields(Indexes)) |f| {
                 const index = &@field(self.indexes, f.name);
-                const index_node = &@field(node.headers, f.name);
+                const index_node = node.get_header(@field(Field, f.name));
                 index.erase(index_node);
             }
             self.allocator.destroy(node);
+            self.item_count -= 1;
         }
 
         // =========================================== Iterable ===========================================
