@@ -106,6 +106,7 @@ pub fn MultiIndex(comptime T: type, comptime config: Config(T)) type {
 
         pub fn insert(self: *Self, value: T) !void {
             const node = try self.allocator.create(Node);
+            errdefer self.allocator.destroy(node);
             node.value = value;
             node.headers = .{};
 
