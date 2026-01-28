@@ -25,6 +25,11 @@ const Config = struct {
     base_cap: usize = 10,
 };
 
+pub const Range = struct {
+    begin: ?*Node,
+    end: ?*Node,
+};
+
 pub fn FromTypeConfig(
     T: type,
     adaptor: fn (*Node) T,
@@ -198,6 +203,19 @@ pub fn HashTable(comptime config: Config) type {
                 tmp = current.next_;
             }
             return null;
+        }
+
+        pub fn equal_range(self: Self, node: *Node) Range {
+            const bucket_idx = self.get_bucket_idx(node);
+            const begin = self.find_in_bucket(self.table[bucket_idx], node);
+            var end = begin;
+            while (self.hash_context.eql(begin, end)) {
+                end = end.next_;
+            }
+            return Range{
+                .begin = begin,
+                .end = end,
+            };
         }
 
         pub fn find(self: Self, node: *Node) ?*Node {

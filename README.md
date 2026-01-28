@@ -186,12 +186,12 @@ pub fn deinit(self: *Self) void
 // Exact match on any indexed field
 pub fn find(self: Self, comptime field: Field, v: KeyType) ?T
 pub fn find_it(self: Self, comptime field: Field, v: KeyType) Iterator
+pub fn equal_range(self: Self, field: Field, v: KeyType) Range
 
 // Range queries (ordered indexes only)
 pub fn lower_bound(self: Self, comptime field: Field, v: KeyType) Iterator
 pub fn upper_bound(self: Self, comptime field: Field, v: KeyType) Iterator
 pub fn range(self: Self, field: Field, v1: KeyType, v2: KeyType) Range
-pub fn equal_range(self: Self, field: Field, v: KeyType) Range
 ```
 
 ### Iteration

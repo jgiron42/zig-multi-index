@@ -255,7 +255,37 @@ pub fn MultiIndex(comptime T: type, comptime config: Config(T)) type {
         }
 
         pub fn equal_range(self: Self, comptime field: Field, v: key_type(field)) Range {
-            return self.range(field, v, v);
+            var node: Node = undefined;
+            @field(node.value, @tagName(field)) = v;
+
+            const index = &@field(self.indexes, @tagName(field));
+            const index_node = node.get_header(field);
+
+            const tmp = index.equal_range(index_node);
+
+            return Range{
+                .lower_bound = Iterator{
+                    .node = if (tmp.begin) |n|
+                        Node.from_header(field, n)
+                    else
+                        null,
+                    .field = field,
+                },
+                .upper_bound = Iterator{
+                    .node = if (tmp.end) |n|
+                        Node.from_header(field, n)
+                    else
+                        null,
+                    .field = field,
+                },
+                .iterator = Iterator{
+                    .node = if (tmp.begin) |n|
+                        Node.from_header(field, n)
+                    else
+                        null,
+                    .field = field,
+                },
+            };
         }
 
         pub fn erase_range(self: *Self, r: Range) void {

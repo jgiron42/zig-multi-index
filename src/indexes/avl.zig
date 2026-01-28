@@ -51,6 +51,11 @@ const Config = struct {
     unique: bool,
 };
 
+pub const Range = struct {
+    begin: ?*Node,
+    end: ?*Node,
+};
+
 pub fn FromTypeConfig(
     T: type,
     adaptor: fn (*Node) T,
@@ -482,6 +487,13 @@ pub fn AVL(comptime config: Config) type {
                     },
                 }
             }
+        }
+
+        pub fn equal_range(self: Self, node: *Node) Range {
+            return Range{
+                .begin = self.lower_bound(node),
+                .end = self.upper_bound(node),
+            };
         }
 
         /// return the "reference" of a node (a pointer to the pointer to this node)
