@@ -1,0 +1,28 @@
+# This is a basic workflow to help you get started with Actions
+
+name: CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: eloitor/zig:0.15.2
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: check fmt
+        run: zig fmt --check src build.zig
+      
+      - name: build
+        run: zig build
+
+      - name: test
+        run: zig build test
