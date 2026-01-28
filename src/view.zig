@@ -2,6 +2,8 @@
 // Copyright (c) 2026 Joachim Giron
 const std = @import("std");
 
+/// An iterator wrapper that restricts iteration to a specific range [lower_bound, upper_bound).
+/// `Algorithm`: when `next()` or `prev()` is called, it checks against `upper_bound` and `lower_bound` respectively.
 pub fn BoundedIterator(Iterator: type) type {
     return struct {
         lower_bound: ?Iterator = null,

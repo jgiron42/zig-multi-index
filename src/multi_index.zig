@@ -9,6 +9,8 @@ pub const IndexEnum = @import("indexes.zig").IndexEnum;
 
 pub const Config = @import("config.zig").Config;
 
+/// A multi-index container that allows indexing values of type `T` by multiple fields.
+/// The `config` argument specifies which fields to index and how (e.g. unique, ordered).
 pub fn MultiIndex(comptime T: type, comptime config: Config(T)) type {
     return struct {
         allocator: std.mem.Allocator,
@@ -32,6 +34,7 @@ pub fn MultiIndex(comptime T: type, comptime config: Config(T)) type {
 
         pub const Field = std.meta.FieldEnum(Indexes);
 
+        /// An iterator over the index.
         pub const Range = @import("view.zig").BoundedIterator(Iterator);
 
         pub const Iterator = struct {
@@ -71,6 +74,7 @@ pub fn MultiIndex(comptime T: type, comptime config: Config(T)) type {
 
         // =========================================== General ===========================================
 
+        /// Initialize the multi-index container with the given allocator.
         pub fn init(allocator: std.mem.Allocator) Self {
             var self = Self{ .allocator = allocator };
             inline for (std.meta.fields(Indexes)) |f| {
@@ -80,6 +84,7 @@ pub fn MultiIndex(comptime T: type, comptime config: Config(T)) type {
             return self;
         }
 
+        /// Deinitialize the container and free all nodes.
         pub fn deinit(self: *Self) void {
             self.reset();
             inline for (std.meta.fields(Indexes)) |f| {
@@ -102,10 +107,14 @@ pub fn MultiIndex(comptime T: type, comptime config: Config(T)) type {
             @field(self.indexes, lastField.name).reset(self.allocator, free_fn);
         }
 
+        /// Returns the number of items in the container.
         pub fn count(self: Self) usize {
             return self.item_count;
         }
 
+        /// Insert a new value into the container.
+        /// Fails if any unique index constraint is violated.
+        /// If insertion fails, the container remains unchanged.
         pub fn insert(self: *Self, value: T) !void {
             const node = try self.allocator.create(Node);
             errdefer self.allocator.destroy(node);
@@ -134,6 +143,10 @@ pub fn MultiIndex(comptime T: type, comptime config: Config(T)) type {
             self.item_count += 1;
         }
 
+        /// Update the value of an existing item.
+        /// The `iterator` points to the item to be updated.
+        /// Fails if the new value violates any unique index constraint.
+        /// Returns the old value.
         pub fn update(self: *Self, iterator: Iterator, value: T) !T {
             const node = iterator.node orelse return error.InvalidIterator;
             const Hints = utils.map_struct(@TypeOf(config), hint_from_config, true);
@@ -165,6 +178,7 @@ pub fn MultiIndex(comptime T: type, comptime config: Config(T)) type {
             return old_value;
         }
 
+        /// Remove an item pointed to by `iterator`.
         pub fn erase_it(self: *Self, iterator: Iterator) void {
             const node = iterator.node orelse return;
             inline for (std.meta.fields(Indexes)) |f| {
@@ -178,6 +192,7 @@ pub fn MultiIndex(comptime T: type, comptime config: Config(T)) type {
 
         // =========================================== Iterable ===========================================
 
+        /// Returns an iterator to the beginning of the index for the specified field.
         pub fn begin(self: Self, field: Field) Iterator {
             return .{
                 .node = switch (field) {
@@ -190,6 +205,8 @@ pub fn MultiIndex(comptime T: type, comptime config: Config(T)) type {
             };
         }
 
+        /// Find an item by key in the specified index field.
+        /// Returns an iterator pointing to the item, or an invalid iterator if not found.
         pub fn find_it(self: Self, comptime field: Field, v: key_type(field)) Iterator {
             var node: Node = undefined;
             @field(node.value, @tagName(field)) = v;
@@ -206,12 +223,16 @@ pub fn MultiIndex(comptime T: type, comptime config: Config(T)) type {
             };
         }
 
+        /// Find an item by key in the specified index field.
+        /// Returns the value if found, or null otherwise.
         pub fn find(self: Self, comptime field: Field, v: key_type(field)) ?T {
             return self.find_it(field, v).peek();
         }
 
         // =========================================== Ordered ===========================================
 
+        /// Returns an iterator to the first element that is not less than `v`.
+        /// Only available for ordered indexes.
         pub fn lower_bound(self: Self, comptime field: Field, v: key_type(field)) Iterator {
             var node: Node = undefined;
             @field(node.value, @tagName(field)) = v;
@@ -228,6 +249,8 @@ pub fn MultiIndex(comptime T: type, comptime config: Config(T)) type {
             };
         }
 
+        /// Returns an iterator to the first element that is greater than `v`.
+        /// Only available for ordered indexes.
         pub fn upper_bound(self: Self, comptime field: Field, v: key_type(field)) Iterator {
             var node: Node = undefined;
             @field(node.value, @tagName(field)) = v;
@@ -244,6 +267,8 @@ pub fn MultiIndex(comptime T: type, comptime config: Config(T)) type {
             };
         }
 
+        /// Returns a range of elements [v1, v2].
+        /// Only available for ordered indexes.
         pub fn range(self: Self, comptime field: Field, v1: key_type(field), v2: key_type(field)) Range {
             const lb: Iterator = self.lower_bound(field, v1);
             const ub: Iterator = self.upper_bound(field, v2);
@@ -254,6 +279,8 @@ pub fn MultiIndex(comptime T: type, comptime config: Config(T)) type {
             };
         }
 
+        /// Returns a range of elements equal to `v`.
+        /// For unique indexes, this range contains at most one element.
         pub fn equal_range(self: Self, comptime field: Field, v: key_type(field)) Range {
             var node: Node = undefined;
             @field(node.value, @tagName(field)) = v;
@@ -288,6 +315,7 @@ pub fn MultiIndex(comptime T: type, comptime config: Config(T)) type {
             };
         }
 
+        /// Erase all elements in the given range.
         pub fn erase_range(self: *Self, r: Range) void {
             var current = r.lower_bound orelse return;
             while (current.node != null and (r.upper_bound == null or !current.eql(r.upper_bound.?))) {
